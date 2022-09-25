@@ -1,0 +1,6 @@
+*.gif
+*.png
+*.egg-info
+stable_diffusion_image_generator/__pycache__/
+__pycache__/
+build/
