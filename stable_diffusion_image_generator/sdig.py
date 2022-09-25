@@ -18,18 +18,27 @@ def dummy(images, **kwargs):
     return images, False
 
 
+def load_model_path():
+    return yaml.load(open(config_path, "r"), yaml.SafeLoader)["model_path"]
+
+
+def set_model_path(model_path: str):
+    print("Configuring path to...")
+    print(model_path)
+    with open(config_path, "w+") as f:
+        f.write(f"---\n    model_path: {model_path}")
+
+
 class SDIG:
     def __init__(
         self,
+        model_path: str,
         device: str = "cuda",
     ):
-        self.model_path = self.load_model_path()
+        self.model_path = model_path
         self.device = device
         self.pipe_text2img = None
         self.pipe_img2img = None
-
-    def load_model_path(self):
-        return yaml.load(open(config_path, "r"), yaml.SafeLoader)["model_path"]
 
     def assert_text2img_pipeline(self):
         if self.pipe_text2img is not None:
@@ -58,10 +67,17 @@ class SDIG:
         return pipe
 
     def generate_from_text(
-        self, prompt: str, num: int, strength: float, latents: np.array
+        self,
+        prompt: str,
+        num: int = 1,
+        strength: float = 0.5,
+        latents: np.array = None,
     ) -> List[Image.Image]:
         self.assert_text2img_pipeline()
         pipe = self.pipe_text2img
+
+        if latents is None:
+            latents = self.create_latents()
 
         print("Generating images...")
         images = []
@@ -264,7 +280,12 @@ def main():
         help="Number of frames in animation",
     )
     parser.add_argument("--upscale", type=bool, default=False)
-    parser.add_argument("--set_model_path", type=str, default=None)
+    parser.add_argument(
+        "--set_model_path",
+        type=str,
+        default=None,
+        help="Path to stable diffusion model. Only necessary once.",
+    )
     arguments = parser.parse_args()
 
     if arguments.text is None and arguments.image is None:
@@ -272,15 +293,11 @@ def main():
         return
 
     if arguments.set_model_path is not None:
-        print("Configuring path to...")
-        print(arguments.set_model_path)
-        model_path = arguments.set_model_path
-        with open(config_path, "w+") as f:
-            f.write(f"---\n    model_path: {model_path}")
+        set_model_path(arguments.set_model_path)
         return
 
     images = []
-    sdig = SDIG()
+    sdig = SDIG(load_model_path())
     if arguments.mode == "txt2img":
         latents = sdig.create_latents()
         images = sdig.generate_from_text(
@@ -308,7 +325,7 @@ def main():
             prompt=arguments.text,
             source_img=source_img,
             num=arguments.num,
-            strength=arguments.strength
+            strength=arguments.strength,
         )
 
         if arguments.animate:
@@ -318,7 +335,7 @@ def main():
                 output=f"{arguments.output_name}.gif",
                 num_frames=arguments.animation_num_frames,
                 duration=arguments.animation_duration,
-                strength=arguments.animation_strength
+                strength=arguments.animation_strength,
             )
 
     if arguments.upscale:
