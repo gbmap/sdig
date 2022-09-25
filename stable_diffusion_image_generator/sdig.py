@@ -267,6 +267,10 @@ def main():
     parser.add_argument("--set_model_path", type=str, default=None)
     arguments = parser.parse_args()
 
+    if arguments.text is None and arguments.image is None:
+        parser.print_help()
+        return
+
     if arguments.set_model_path is not None:
         print("Configuring path to...")
         print(arguments.set_model_path)
