@@ -6,7 +6,7 @@ from typing import List
 from argparse import ArgumentParser
 
 from diffusers import StableDiffusionPipeline, StableDiffusionImg2ImgPipeline
-from super_resolution import cartoon_upsampling_8x
+from super_resolution import cartoon_upsampling_8x, cartoon_upsampling_4x
 from PIL import Image
 
 from pathlib import Path
@@ -18,27 +18,18 @@ def dummy(images, **kwargs):
     return images, False
 
 
-def load_model_path():
-    return yaml.load(open(config_path, "r"), yaml.SafeLoader)["model_path"]
-
-
-def set_model_path(model_path: str):
-    print("Configuring path to...")
-    print(model_path)
-    with open(config_path, "w+") as f:
-        f.write(f"---\n    model_path: {model_path}")
-
-
 class SDIG:
     def __init__(
         self,
-        model_path: str,
         device: str = "cuda",
     ):
-        self.model_path = model_path
+        self.model_path = self.load_model_path()
         self.device = device
         self.pipe_text2img = None
         self.pipe_img2img = None
+
+    def load_model_path(self):
+        return yaml.load(open(config_path, "r"), yaml.SafeLoader)["model_path"]
 
     def assert_text2img_pipeline(self):
         if self.pipe_text2img is not None:
@@ -67,21 +58,17 @@ class SDIG:
         return pipe
 
     def generate_from_text(
-        self,
-        prompt: str,
-        num: int = 1,
-        strength: float = 0.5,
-        latents: np.array = None,
+        self, prompt: str, num: int, strength: float, latents: np.array
     ) -> List[Image.Image]:
         self.assert_text2img_pipeline()
         pipe = self.pipe_text2img
 
-        if latents is None:
-            latents = self.create_latents()
-
         print("Generating images...")
         images = []
         for i in range(num):
+            if i > 0:
+                latents = latents + self.create_latents().clamp(-0.1, 0.1)
+
             images.append(
                 pipe(
                     prompt=prompt,
@@ -119,9 +106,10 @@ class SDIG:
     def save_images(self, images: List, output_name: str):
         filenames = [f"{output_name}_{i}.png" for i in range(len(images))]
         for i, image in enumerate(images):
+            print(f'Saving image at "{filenames[i]}"')
             image.save(filenames[i])
 
-    def animate_with_img2img(
+    def animate_image_with_img2img(
         self,
         prompt: str,
         image: Image.Image,
@@ -130,7 +118,7 @@ class SDIG:
         strength: float = 0.1,
         num_frames: int = 10,
     ) -> List[Image.Image]:
-        generated_imgs = [image]
+        generated_imgs = []
         current_img = image
         for i in range(num_frames):
             img = self.generate_from_img(
@@ -157,9 +145,10 @@ class SDIG:
 
         return generated_imgs
 
-    def animate_with_text2img(
+    def animate_image_with_text2img(
         self,
         prompt: str,
+        image: Image.Image,
         latents: torch.Tensor,
         duration: int = 50,
         output: str = "animated.gif",
@@ -168,10 +157,7 @@ class SDIG:
         latent_offset_size: float = 0.1,
     ) -> List[Image.Image]:
         generated_imgs = []
-        latent_offset = self.create_latents() * latent_offset_size
         for i in range(num_frames):
-            t = i / num_frames
-            t = t * t * t * (t * (t * 6 - 15) + 10)
             img = self.generate_from_text(
                 prompt=prompt,
                 num=1,
@@ -179,7 +165,10 @@ class SDIG:
                 latents=latents,
             )[0]
             generated_imgs.append(img)
-            latents = latents + latent_offset * t
+
+            latents = latents + self.create_latents().clamp(
+                -latent_offset_size, latent_offset_size
+            )
 
         frames = generated_imgs.copy()
 
@@ -228,7 +217,7 @@ def main():
         "--mode",
         type=str,
         default="txt2img",
-        choices=["txt2img", "img2img"],
+        choices=["txt2img", "img2img", "upscale"],
     )
     parser.add_argument(
         "--text", type=str, default=None, help="Text to generate from"
@@ -263,7 +252,7 @@ def main():
     parser.add_argument(
         "--animation_latent_offset",
         type=float,
-        default=0.05,
+        default=0.0125,
         help="Animation latent offset",
     )
     parser.add_argument(
@@ -279,47 +268,38 @@ def main():
         help="Number of frames in animation",
     )
     parser.add_argument("--upscale", type=bool, default=False)
-    parser.add_argument(
-        "--set_model_path",
-        type=str,
-        default=None,
-        help="Path to stable diffusion model. Only necessary once.",
-    )
+    parser.add_argument("--set_model_path", type=str, default=None)
     arguments = parser.parse_args()
 
-    if (
-        arguments.text is None
-        and arguments.image is None
-        and arguments.set_model_path is None
-    ):
-        parser.print_help()
-        return
-
     if arguments.set_model_path is not None:
-        set_model_path(arguments.set_model_path)
+        print("Configuring path to...")
+        print(arguments.set_model_path)
+        model_path = arguments.set_model_path
+        with open(config_path, "w+") as f:
+            f.write(f"---\n    model_path: {model_path}")
         return
 
     images = []
-    sdig = SDIG(load_model_path())
+    sdig = SDIG()
     if arguments.mode == "txt2img":
         latents = sdig.create_latents()
+        images = sdig.generate_from_text(
+            prompt=arguments.text,
+            num=arguments.num,
+            strength=arguments.strength,
+            latents=latents,
+        )
 
         if arguments.animate:
-            images = sdig.animate_with_text2img(
+            images = sdig.animate_image_with_text2img(
                 arguments.text,
+                images[0],
                 latents=latents,
                 output=f"{arguments.output_name}.gif",
                 duration=arguments.animation_duration,
                 strength=arguments.strength,
                 latent_offset_size=arguments.animation_latent_offset,
                 num_frames=arguments.animation_num_frames,
-            )
-        else:
-            images = sdig.generate_from_text(
-                prompt=arguments.text,
-                num=arguments.num,
-                strength=arguments.strength,
-                latents=latents,
             )
 
     elif arguments.mode == "img2img":
@@ -328,18 +308,20 @@ def main():
             prompt=arguments.text,
             source_img=source_img,
             num=arguments.num,
-            strength=arguments.strength,
+            strength=arguments.strength
         )
 
         if arguments.animate:
-            images = sdig.animate_with_img2img(
+            images = sdig.animate_image_with_img2img(
                 arguments.text,
                 source_img,
                 output=f"{arguments.output_name}.gif",
                 num_frames=arguments.animation_num_frames,
                 duration=arguments.animation_duration,
-                strength=arguments.animation_strength,
+                strength=arguments.animation_strength
             )
+    elif arguments.mode == "upscale":
+        images = sdig.upscale([Image.open(arguments.image)])
 
     if arguments.upscale:
         images = sdig.upscale(images)
