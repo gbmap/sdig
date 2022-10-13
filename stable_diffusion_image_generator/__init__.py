@@ -1,1 +1,1 @@
-from .sdig import SDIG, load_model_path, set_model_path
+from .sdig import SDIG
