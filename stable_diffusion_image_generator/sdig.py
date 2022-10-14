@@ -210,6 +210,13 @@ class SDIG:
         )
         return latents
 
+    def set_model_path(self, path):
+        print("Configuring path to...")
+        print(path)
+        model_path = path
+        with open(config_path, "w+") as f:
+            f.write(f"---\n    model_path: {model_path}")
+
 
 def main():
     parser = ArgumentParser()
@@ -271,16 +278,12 @@ def main():
     parser.add_argument("--set_model_path", type=str, default=None)
     arguments = parser.parse_args()
 
+    sdig = SDIG()
     if arguments.set_model_path is not None:
-        print("Configuring path to...")
-        print(arguments.set_model_path)
-        model_path = arguments.set_model_path
-        with open(config_path, "w+") as f:
-            f.write(f"---\n    model_path: {model_path}")
+        sdig.set_model_path(arguments.set_model_path)
         return
 
     images = []
-    sdig = SDIG()
     if arguments.mode == "txt2img":
         latents = sdig.create_latents()
         images = sdig.generate_from_text(
